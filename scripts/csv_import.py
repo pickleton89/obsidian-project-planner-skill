@@ -26,11 +26,24 @@ Options:
 
 import argparse
 import csv
-import json
 import sys
-import uuid
 from datetime import datetime
 from pathlib import Path
+
+# Ensure the scripts directory is on the path for sibling imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+from common import (
+    create_project_data,
+    find_bucket,
+    find_project,
+    is_sync_enabled,
+    load_data,
+    new_uuid,
+    register_tags,
+    save_data,
+    write_task_file,
+)
 
 # Known column name → plugin field mappings
 COLUMN_ALIASES = {
@@ -159,10 +172,6 @@ DEFAULT_PRIORITY_MAP = {
     "none": None,
     "trivial": "low",
 }
-
-
-def new_uuid() -> str:
-    return str(uuid.uuid4())
 
 
 def detect_delimiter(filepath: str) -> str:
@@ -442,15 +451,15 @@ def import_csv(
 
     # Summary for dry run
     if dry_run:
-        print(f"\n  Dry Run — Import Preview")
-        print(f"  ========================")
+        print("\n  Dry Run — Import Preview")
+        print("  ========================")
         print(f"  Source: {filepath}")
         print(f"  Project: {project_name}")
         print(f"  Tasks found: {len(parsed_tasks)}")
-        print(f"  Column mapping:")
+        print("  Column mapping:")
         for idx, field in sorted(col_map.items()):
             print(f"    {headers[idx]} → {field}")
-        print(f"\n  Tasks:")
+        print("\n  Tasks:")
         for t in parsed_tasks:
             parent_str = f" (child of {t.get('parentId', '')[:8]}...)" if t.get("parentId") else ""
             dep_count = len(t.get("dependencies", []))
@@ -468,22 +477,19 @@ def import_csv(
 
     # --- Write tasks ---
     # Load or create project
-    sys.path.insert(0, str(Path(__file__).parent))
-    from pp_manager import load_data, save_data, find_project, cmd_create_project, find_bucket
-
     data = load_data(vault_path)
     proj = find_project(data, project_name)
     if not proj:
         print(f"Creating project '{project_name}'...")
-        # Collect unique bucket names from import
         bucket_names_from_import = sorted(set(
             t.get("_bucket_name") for t in parsed_tasks if t.get("_bucket_name")
         ))
         bucket_list = bucket_names_from_import if bucket_names_from_import else None
-        proj = cmd_create_project(vault_path, project_name, bucket_names=bucket_list)
-        # Reload data after project creation
-        data = load_data(vault_path)
-        proj = find_project(data, project_name)
+        data, proj = create_project_data(data, project_name, bucket_list)
+        save_data(vault_path, data)
+        # Create folder structure
+        tasks_dir = Path(vault_path) / project_name / "Tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolve bucket references
     for task in parsed_tasks:
@@ -493,54 +499,36 @@ def import_csv(
             if bucket:
                 task["bucketId"] = bucket["id"]
             else:
-                warnings.append(f"Bucket '{bucket_name}' not found in project — skipping bucket assignment for '{task['title']}'")
+                warnings.append(f"Bucket '{bucket_name}' not found in project -- skipping bucket assignment for '{task['title']}'")
 
-    # Check if markdown sync is enabled
-    settings = data.get("settings", {})
-    sync_enabled = settings.get("enableMarkdownSync", False)
-
+    sync_enabled = is_sync_enabled(data)
     tasks_written = 0
+    pid = proj["id"]
 
+    # Always write to data.json for immediate queryability
+    for task in parsed_tasks:
+        clean_task = _clean_task(task)
+        data["tasksByProject"].setdefault(pid, []).append(clean_task)
+        tasks_written += 1
+
+    # Also write markdown files when sync is enabled
     if sync_enabled:
-        # Write markdown files
-        tasks_dir = Path(vault_path) / project_name / "Tasks"
-        tasks_dir.mkdir(parents=True, exist_ok=True)
-
         for task in parsed_tasks:
             clean_task = _clean_task(task)
-            md_content = _task_to_markdown(clean_task)
-            # Sanitize filename
-            safe_title = "".join(c for c in task["title"] if c not in r'\/:*?"<>|').strip()
-            filepath = tasks_dir / f"{safe_title}.md"
-            filepath.write_text(md_content, encoding="utf-8")
-            tasks_written += 1
-    else:
-        # Write directly to data.json
-        pid = proj["id"]
-        for task in parsed_tasks:
-            clean_task = _clean_task(task)
-            data["tasksByProject"].setdefault(pid, []).append(clean_task)
-            tasks_written += 1
+            write_task_file(vault_path, project_name, clean_task)
 
-        # Register new tags
-        existing_tags = {t["name"].lower() for t in data.get("tags", [])}
-        for task in parsed_tasks:
-            for tag in task.get("tags", []):
-                if tag.lower() not in existing_tags:
-                    data.setdefault("tags", []).append({
-                        "id": new_uuid(),
-                        "name": tag,
-                        "color": "#808080",
-                    })
-                    existing_tags.add(tag.lower())
-
-        save_data(vault_path, data)
+    # Register new tags
+    all_tags = []
+    for task in parsed_tasks:
+        all_tags.extend(task.get("tags", []))
+    register_tags(data, all_tags)
+    save_data(vault_path, data)
 
     n_parents = sum(1 for t in parsed_tasks if t.get("parentId"))
     n_deps = sum(len(t.get("dependencies", [])) for t in parsed_tasks)
 
-    print(f"\n  Import Complete")
-    print(f"  ===============")
+    print("\n  Import Complete")
+    print("  ===============")
     print(f"  Project: {project_name}")
     print(f"  Tasks imported: {tasks_written}")
     print(f"  Parent-child relationships: {n_parents}")
@@ -548,7 +536,7 @@ def import_csv(
     if sync_enabled:
         print(f"  Written as: markdown files in {project_name}/Tasks/")
     else:
-        print(f"  Written to: data.json (markdown sync is off)")
+        print("  Written to: data.json (markdown sync is off)")
     if warnings:
         print(f"\n  Warnings ({len(warnings)}):")
         for w in warnings:
@@ -607,64 +595,6 @@ def _clean_task(task: dict) -> dict:
     """Remove internal fields (prefixed with _) from a task dict."""
     return {k: v for k, v in task.items() if not k.startswith("_")}
 
-
-def _task_to_markdown(task: dict) -> str:
-    """Convert a task dict to a markdown string with YAML frontmatter."""
-    lines = ["---"]
-
-    # Required fields
-    lines.append(f"id: {task['id']}")
-    lines.append(f"title: {task['title']}")
-    lines.append(f"status: {task.get('status', 'Not Started')}")
-    lines.append(f"completed: {'true' if task.get('completed') else 'false'}")
-
-    # Optional scalar fields
-    for field in ["priority", "parentId", "bucketId", "startDate", "dueDate"]:
-        if task.get(field) is not None:
-            lines.append(f"{field}: {task[field]}")
-
-    # Effort fields
-    for field in ["effortCompleted", "effortRemaining"]:
-        if task.get(field) is not None:
-            lines.append(f"{field}: {task[field]}")
-
-    # Cost fields
-    for field in ["costEstimate", "costActual", "costType", "hourlyRate"]:
-        if task.get(field) is not None:
-            lines.append(f"{field}: {task[field]}")
-
-    # Tags
-    if task.get("tags"):
-        lines.append("tags:")
-        for tag in task["tags"]:
-            lines.append(f"  - {tag}")
-
-    # Dependencies
-    if task.get("dependencies"):
-        lines.append("dependencies:")
-        for dep in task["dependencies"]:
-            lines.append(f"  - {dep['type']}:{dep['taskId']}")
-
-    lines.append("---")
-    lines.append("")
-
-    # Body
-    if task.get("description"):
-        lines.append(task["description"])
-        lines.append("")
-
-    # Subtasks section placeholder
-    if task.get("subtasks"):
-        lines.append("## Subtasks")
-        for st in task["subtasks"]:
-            check = "x" if st.get("completed") else " "
-            lines.append(f"- [{check}] {st['title']}")
-        lines.append("")
-
-    lines.append("---")
-    lines.append("*Managed by Project Planner — do not remove the frontmatter.*")
-
-    return "\n".join(lines) + "\n"
 
 
 # --- CLI ---

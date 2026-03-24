@@ -171,7 +171,5 @@ In markdown frontmatter, dependencies use the format `TYPE:TASK_ID` (e.g., `bloc
 
 ## UUID Generation
 
-All IDs are RFC 4122 v4 UUIDs. Generate with:
-- Python: `import uuid; str(uuid.uuid4())`
-- JavaScript: `crypto.randomUUID()`
-- CLI: `uuidgen` (macOS)
+All IDs are RFC 4122 v4 UUIDs. The `scripts/common.py:new_uuid()` function handles generation
+automatically -- you should not need to generate UUIDs manually.
