@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Eval workspace (large, regeneratable)
+obsidian-project-planner-workspace/
+
+# Temporary files
+/tmp/
+*.bak

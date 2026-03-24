@@ -1,0 +1,23 @@
+{
+  "skill_name": "obsidian-project-planner",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I need to create a new project called \"Q2 Marketing Campaign\" in my Obsidian vault at /tmp/pp-test-vault. It should have buckets for Planning, Content Creation, Review, and Launch. The project starts April 1st and is due June 30th. Then add three tasks: \"Define target audience\" (high priority, due April 10, bucket Planning), \"Write blog post series\" (medium priority, due May 15, bucket Content Creation, depends on Define target audience), and \"Social media calendar\" (medium priority, due May 1, bucket Planning, tags: social, scheduling).",
+      "expected_output": "A new project created in data.json with custom buckets, and three markdown task files written to Q2 Marketing Campaign/Tasks/ with correct YAML frontmatter including dependencies and bucket assignments.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Import the CSV file at /tmp/pp-test-vault/migration-tasks.csv into a new project called \"E-Commerce Platform\" in my vault at /tmp/pp-test-vault. Do a dry run first to show me the mapping, then do the actual import.",
+      "expected_output": "First a dry-run showing column mapping and parsed tasks with hierarchy and dependencies, then the actual import creating markdown task files with parent-child relationships (outline levels) and dependency chains resolved.",
+      "files": ["/tmp/pp-test-vault/migration-tasks.csv"]
+    },
+    {
+      "id": 3,
+      "prompt": "Show me the status of my projects in the vault at /tmp/pp-test-vault, then show me the board view for \"Website Redesign\", and list all tasks that are overdue or due this week.",
+      "expected_output": "A project overview with task counts and completion percentages, a text-based board view showing tasks organized by bucket, and a filtered list of overdue tasks (Write API endpoints has due date before start date — it's overdue).",
+      "files": []
+    }
+  ]
+}
