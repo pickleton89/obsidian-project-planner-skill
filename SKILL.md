@@ -26,10 +26,11 @@ Missing or unrecognized storage must be reported, never described as an empty bo
 
 The old JSON/Markdown writer is disabled. It can lose note content, ignore the
 configured project path, and conflict with plugin synchronization. Creation, updates,
-deletes and CSV execution therefore stop before file mutation. This is a containment
-repair, not a replacement writer. Make such changes through the Project Planner UI;
+deletes and CSV execution therefore stop before file mutation. The supported design is a read-only Planner
+helper; TaskNotes handles general task edits. Make such changes through the Project Planner UI;
 do not bypass the guard by editing `.obsidian` data or generating task files manually.
-CSV dry-run can preview the parser but is not evidence of successful import support.
+Rebuilding Planner writes is a separate feature request. CSV dry-run can preview
+the parser but is not a supported import operation.
 
 ## Host behavior
 
