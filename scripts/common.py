@@ -38,27 +38,47 @@ def load_data(vault_path: str) -> dict:
         print("Is obsidian-project-planner installed in this vault?", file=sys.stderr)
         sys.exit(1)
     with open(dp, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    settings = data.get("settings", {})
+    if "projects" in settings:
+        if "projects" in data and data["projects"] != settings["projects"]:
+            raise ValueError("Conflicting Planner project layouts; refusing to guess")
+        data["projects"] = settings["projects"]
+        data["tags"] = settings.get("availableTags", [])
+    if not isinstance(data.get("projects"), list):
+        raise ValueError("Unsupported Planner project layout")
+    if "tasksByProject" not in data:
+        # Newer plugin storage is per-project. A missing file is not an empty board.
+        tasks = {}
+        vault = Path(vault_path).resolve()
+        for project in data["projects"]:
+            key = project.get("storageKey")
+            if not key:
+                raise ValueError("Unsupported Planner task layout: missing storageKey")
+            path = (vault / settings.get("projectsBasePath", "Project Planner") / key / ".planner-tasks.json").resolve()
+            if not path.is_relative_to(vault):
+                raise ValueError("Planner storage path escapes the vault")
+            record = json.loads(path.read_text())
+            if record.get("version") != 1 or record.get("projectId") != project["id"] or not isinstance(record.get("tasks"), list):
+                raise ValueError("Unsupported or mismatched Planner task file")
+            tasks[project["id"]] = record["tasks"]
+        data["tasksByProject"] = tasks
+    if not isinstance(data["tasksByProject"], dict):
+        raise ValueError("Invalid Planner tasksByProject")
+    return data
+
+
+def mutation_unavailable() -> None:
+    raise SystemExit(
+        "Planner writes are disabled: this legacy writer cannot safely preserve "
+        "the installed plugin schema, note bodies and synchronized files. "
+        "Use the Project Planner plugin to make changes; read-only queries remain available."
+    )
 
 
 def save_data(vault_path: str, data: dict) -> None:
-    """Write data.json back to the plugin directory.
-
-    Creates a .bak backup before writing and runs post-write validation.
-    """
-    dp = data_path(vault_path)
-    if dp.exists():
-        backup = dp.with_suffix(".json.bak")
-        shutil.copy2(dp, backup)
-
-    with open(dp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-
-    # Post-write validation (warnings only, never blocks the write)
-    errors = validate_data(data)
-    for err in errors:
-        print(f"  Warning: {err}", file=sys.stderr)
+    """Fail before disk I/O until a compatible transactional writer is implemented."""
+    mutation_unavailable()
 
 
 # ---------------------------------------------------------------------------
@@ -91,17 +111,8 @@ def find_bucket(project: dict, name: str) -> dict | None:
 
 
 def find_task_by_title(tasks: list[dict], title: str) -> list[dict]:
-    """Find tasks by title using 2-tier matching: exact then substring.
-
-    Returns exact case-insensitive matches first. If none, returns substring
-    matches. Caller should handle ambiguity (multiple results).
-    """
-    title_lower = title.lower()
-    exact = [t for t in tasks if t.get("title", "").lower() == title_lower]
-    if exact:
-        return exact
-    partial = [t for t in tasks if title_lower in t.get("title", "").lower()]
-    return partial
+    """Return exact case-insensitive matches; never silently use substrings."""
+    return [t for t in tasks if t.get("title", "").casefold() == title.casefold()]
 
 
 def resolve_project(data: dict, project_name: str | None) -> dict:
@@ -243,13 +254,8 @@ def sanitize_filename(title: str) -> str:
 
 
 def write_task_file(vault_path: str, project_name: str, task: dict) -> Path:
-    """Write a markdown task file to {ProjectName}/Tasks/{Title}.md."""
-    tasks_dir = Path(vault_path) / project_name / "Tasks"
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    safe_title = sanitize_filename(task["title"])
-    filepath = tasks_dir / f"{safe_title}.md"
-    filepath.write_text(task_to_markdown(task), encoding="utf-8")
-    return filepath
+    """Disabled alongside JSON writes: never replace a task note from stale data."""
+    mutation_unavailable()
 
 
 def read_task_frontmatter(filepath: Path) -> dict:
