@@ -800,46 +800,15 @@ def cmd_query(
 
 
 def cmd_install(source_dir: str, vault_path: str, output_json: bool = False) -> dict:
-    """Install or update the skill into a vault."""
-    source = Path(source_dir)
-    target = Path(vault_path) / ".claude" / "skills" / "obsidian-project-planner"
-
-    if not source.exists():
-        print(f"Error: Source directory not found: {source}", file=sys.stderr)
-        sys.exit(1)
-    if not Path(vault_path).exists():
-        print(f"Error: Vault path not found: {vault_path}", file=sys.stderr)
-        sys.exit(1)
-
-    include = ["SKILL.md", "scripts", "references"]
-    updating = target.exists()
-    target.mkdir(parents=True, exist_ok=True)
-
-    copied = []
-    for item_name in include:
-        src = source / item_name
-        dst = target / item_name
-        if not src.exists():
-            continue
-        if src.is_file():
-            shutil.copy2(src, dst)
-        elif src.is_dir():
-            if dst.exists():
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
-        copied.append(item_name)
-
-    action = "Updated" if updating else "Installed"
-    result = {"action": action.lower(), "source": str(source), "target": str(target), "files": copied}
-
-    def _print():
-        print(f"{action} obsidian-project-planner skill")
-        print(f"  Source: {source}")
-        print(f"  Target: {target}")
-        for name in copied:
-            print(f"  + {name}")
-
-    _output(result, _print, output_json=output_json)
+    """Link runtime members to the maintained source; never overwrite copies."""
+    import os
+    import runpy
+    helper = Path(os.environ.get("OBSIDIAN_VAULT_TOOLS_PATH", str(Path(__file__).resolve().parents[2] / "obsidian-vault-tools"))) / "scripts/skill_install.py"
+    if not helper.is_file():
+        raise RuntimeError("Missing obsidian-vault-tools source; install it beside this repository or set OBSIDIAN_VAULT_TOOLS_PATH")
+    install = runpy.run_path(str(helper))["install"]
+    result = install(source_dir, vault_path, "obsidian-project-planner")
+    _output(result, lambda: print(f"{result['action']}: {result['target']} -> {result['source']}"), output_json=output_json)
     return result
 
 
